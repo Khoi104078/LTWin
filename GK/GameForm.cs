@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Media;
 using System.Text;
@@ -12,8 +13,6 @@ using System.Windows.Input;
 
 namespace LogicDive
 {
-
-    
     public partial class GameForm : Form
     {
         List<int> inputkey = new List<int>();
@@ -21,9 +20,9 @@ namespace LogicDive
         int LEFT = 2;
         int DOWN = 3;
         int RIGHT = 4;
-        int movSpeed = 30;
-        int itemSpeed = 15;
-        int meteorSpeed = 25;
+        int movSpeed = 45;
+        int itemSpeed = 25;
+        int meteorSpeed = 45;
         Random rd = new Random();
         int[] CheckPrev = new int[12];
         List<PictureBox> SpawnPointMeteor = new List<PictureBox>();
@@ -34,7 +33,7 @@ namespace LogicDive
         int ItemLimit = 1;
         int playerHP = 100;
         int playerLive = 2;
-        long playerScore = 0;
+        int playerScore = 0;
         int QuestionType = 0;//1=Restart-Quit(y-n)//2=R U sure(y-n)
         int speedCD = 0;
         string StartUp = Application.StartupPath;
@@ -42,10 +41,19 @@ namespace LogicDive
         int percentLimit = 16;
         int music = 1;//1==on//0==off
         int gamepause = 0;//1=pause//0=play
+
+        // --- New: preload caches ---
+        Dictionary<string, Image> img = new Dictionary<string, Image>();
+        Dictionary<string, SoundPlayer> sfx = new Dictionary<string, SoundPlayer>();
+
         public GameForm()
         {
             InitializeComponent();
+            // Enable double buffering to reduce flicker
+            this.SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+            this.UpdateStyles();
         }
+
         private void GameForm_Load(object sender, EventArgs e)
         {
             AddSpawnPoint();
@@ -60,6 +68,78 @@ namespace LogicDive
             MusicPlayer.URL = StartUp + "\\Resources\\Song4.mp3";
             MusicPlayer.settings.autoStart = true;
             MusicPlayer.settings.setMode("loop", true);
+
+            // Preload images and sounds to avoid IO and decoding during game ticks
+            try
+            {
+                // Images
+                img["fireball"] = Image.FromFile(Path.Combine(StartUp, "Resources", "fireball.png"));
+                img["bomb2"] = Image.FromFile(Path.Combine(StartUp, "Resources", "bomb2.png"));
+                img["bomb1"] = Image.FromFile(Path.Combine(StartUp, "Resources", "bomb1.png"));
+                img["fireball+"] = Image.FromFile(Path.Combine(StartUp, "Resources", "fireball+.png"));
+                img["heart"] = Image.FromFile(Path.Combine(StartUp, "Resources", "heart.png"));
+                img["coin"] = Image.FromFile(Path.Combine(StartUp, "Resources", "coin.png"));
+                img["pluscoin"] = Image.FromFile(Path.Combine(StartUp, "Resources", "pluscoin.png"));
+                img["plusheart"] = Image.FromFile(Path.Combine(StartUp, "Resources", "plusheart.png"));
+                img["bomb_small"] = Image.FromFile(Path.Combine(StartUp, "Resources", "bomb.png"));
+                img["bomb3"] = Image.FromFile(Path.Combine(StartUp, "Resources", "bomb3.png"));
+
+                // UI icons (optional preloads)
+                if (File.Exists(Path.Combine(StartUp, "Resources", "musicon.png")))
+                    img["musicon"] = Image.FromFile(Path.Combine(StartUp, "Resources", "musicon.png"));
+                if (File.Exists(Path.Combine(StartUp, "Resources", "musicoff.jpg")))
+                    img["musicoff"] = Image.FromFile(Path.Combine(StartUp, "Resources", "musicoff.jpg"));
+                if (File.Exists(Path.Combine(StartUp, "Resources", "playbut.png")))
+                    img["playbut"] = Image.FromFile(Path.Combine(StartUp, "Resources", "playbut.png"));
+                if (File.Exists(Path.Combine(StartUp, "Resources", "pausebut.png")))
+                    img["pausebut"] = Image.FromFile(Path.Combine(StartUp, "Resources", "pausebut.png"));
+
+                // Sounds (wav recommended for SoundPlayer)
+                if (File.Exists(Path.Combine(StartUp, "Resources", "explo.wav")))
+                {
+                    sfx["explo"] = new SoundPlayer(Path.Combine(StartUp, "Resources", "explo.wav"));
+                    sfx["explo"].LoadAsync();
+                }
+                if (File.Exists(Path.Combine(StartUp, "Resources", "heal.wav")))
+                {
+                    sfx["heal"] = new SoundPlayer(Path.Combine(StartUp, "Resources", "heal.wav"));
+                    sfx["heal"].LoadAsync();
+                }
+                if (File.Exists(Path.Combine(StartUp, "Resources", "coin.wav")))
+                {
+                    sfx["coin"] = new SoundPlayer(Path.Combine(StartUp, "Resources", "coin.wav"));
+                    sfx["coin"].LoadAsync();
+                }
+                if (File.Exists(Path.Combine(StartUp, "Resources", "powerup.wav")))
+                {
+                    sfx["powerup"] = new SoundPlayer(Path.Combine(StartUp, "Resources", "powerup.wav"));
+                    sfx["powerup"].LoadAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Không show MessageBox trong load nặng game; chỉ log
+                System.Diagnostics.Debug.WriteLine("Preload error: " + ex.Message);
+            }
+
+            try
+            {
+                if (Difficult.gameDifficult == 1) // Begin
+                {
+                    meteorSpeed = 35;
+                    meteorLimit = 1;
+                    dameLimit = 15;
+                    percentLimit = 10;
+                }
+                else if (Difficult.gameDifficult == 2) // Hardcore
+                {
+                    meteorSpeed = 60;
+                    meteorLimit = 4;
+                    dameLimit = 30;
+                    percentLimit = 25;
+                }
+            }
+            catch { }
         }
         public void AddSpawnPoint()
         {
@@ -109,11 +189,11 @@ namespace LogicDive
                 {
                     inputkey.Add(keypress);
                 }
-            }    
+            }
         }
         private void GameForm_KeyUp(object sender, KeyEventArgs e)
         {
-            if(e.KeyCode==Keys.Up|| e.KeyCode == Keys.Left || e.KeyCode == Keys.Down|| e.KeyCode == Keys.Right)
+            if (e.KeyCode == Keys.Up || e.KeyCode == Keys.Left || e.KeyCode == Keys.Down || e.KeyCode == Keys.Right)
             {
                 int keyremove = 0;
                 if (e.KeyCode == Keys.Up)
@@ -141,16 +221,16 @@ namespace LogicDive
                     }
                 }
             }
-           
+
         }
         private void TimerMov_Tick(object sender, EventArgs e)
         {
-            if(inputkey.Count==1)
+            if (inputkey.Count == 1)
             {
-                if(inputkey[0]== UP)
+                if (inputkey[0] == UP)
                 {
                     //pictureBoxPlayer.Top -= movSpeed;
-                    if(pictureBoxPlayer.Top>60)
+                    if (pictureBoxPlayer.Top > 60)
                     {
                         pictureBoxPlayer.Top -= movSpeed;
                     }
@@ -158,14 +238,14 @@ namespace LogicDive
                 if (inputkey[0] == LEFT)
                 {
                     //pictureBoxPlayer.Left -= movSpeed;
-                    if(pictureBoxPlayer.Left>10)
+                    if (pictureBoxPlayer.Left > 10)
                     {
                         pictureBoxPlayer.Left -= movSpeed;
                     }
                 }
                 if (inputkey[0] == DOWN)
                 {
-                   //pictureBoxPlayer.Top += movSpeed;
+                    //pictureBoxPlayer.Top += movSpeed;
                     if (pictureBoxPlayer.Top < 500)
                     {
                         pictureBoxPlayer.Top += movSpeed;
@@ -173,29 +253,29 @@ namespace LogicDive
                 }
                 if (inputkey[0] == RIGHT)
                 {
-                   // pictureBoxPlayer.Left += movSpeed;
+                    // pictureBoxPlayer.Left += movSpeed;
                     if (pictureBoxPlayer.Left < 640)
                     {
                         pictureBoxPlayer.Left += movSpeed;
                     }
                 }
             }
-            if(inputkey.Count == 2)
+            if (inputkey.Count == 2)
             {
                 if (inputkey[0] == UP)
                 {
-                    if(inputkey[1]==RIGHT)
+                    if (inputkey[1] == RIGHT)
                     {
-                        if(pictureBoxPlayer.Top > 60&& pictureBoxPlayer.Left < 640)
+                        if (pictureBoxPlayer.Top > 60 && pictureBoxPlayer.Left < 640)
                         {
                             pictureBoxPlayer.Top -= movSpeed / 2;
                             pictureBoxPlayer.Left += movSpeed / 2;
                         }
 
                     }
-                    if(inputkey[1]==LEFT)
+                    if (inputkey[1] == LEFT)
                     {
-                        if(pictureBoxPlayer.Top > 60 && pictureBoxPlayer.Left > 10)
+                        if (pictureBoxPlayer.Top > 60 && pictureBoxPlayer.Left > 10)
                         {
                             pictureBoxPlayer.Top -= movSpeed / 2;
                             pictureBoxPlayer.Left -= movSpeed / 2;
@@ -225,7 +305,7 @@ namespace LogicDive
                 {
                     if (inputkey[1] == RIGHT)
                     {
-                        if(pictureBoxPlayer.Top < 500&& pictureBoxPlayer.Left < 640)
+                        if (pictureBoxPlayer.Top < 500 && pictureBoxPlayer.Left < 640)
                         {
                             pictureBoxPlayer.Top += movSpeed / 2;
                             pictureBoxPlayer.Left += movSpeed / 2;
@@ -234,7 +314,7 @@ namespace LogicDive
                     }
                     if (inputkey[1] == LEFT)
                     {
-                        if(pictureBoxPlayer.Top < 500&& pictureBoxPlayer.Left > 10)
+                        if (pictureBoxPlayer.Top < 500 && pictureBoxPlayer.Left > 10)
                         {
                             pictureBoxPlayer.Top += movSpeed / 2;
                             pictureBoxPlayer.Left -= movSpeed / 2;
@@ -274,25 +354,25 @@ namespace LogicDive
         }
         public void UpdateInfo()
         {
-            if(playerLive==3)
+            if (playerLive == 3)
             {
                 pictureBoxLive1.Visible = true;
                 pictureBoxLive2.Visible = true;
                 pictureBoxLive3.Visible = true;
             }
-            else if(playerLive==2)
+            else if (playerLive == 2)
             {
                 pictureBoxLive1.Visible = false;
                 pictureBoxLive2.Visible = true;
                 pictureBoxLive3.Visible = true;
             }
-            else if(playerLive==1)
+            else if (playerLive == 1)
             {
                 pictureBoxLive1.Visible = false;
                 pictureBoxLive2.Visible = false;
                 pictureBoxLive3.Visible = true;
             }
-            else if(playerLive==0)
+            else if (playerLive == 0)
             {
                 pictureBoxLive1.Visible = false;
                 pictureBoxLive2.Visible = false;
@@ -300,27 +380,27 @@ namespace LogicDive
             }
             playerScore += 2;
             labelScore.Text = playerScore.ToString();
-            if(speedCD!=0)
+            if (speedCD != 0)
             {
                 speedCD--;
                 labelSpeedX2.Visible = true;
             }
-            if(speedCD==0)
+            if (speedCD == 0)
             {
                 movSpeed = 30;
                 labelSpeedX2.Visible = false;
             }
-            
-            if(playerScore==500|| playerScore == 1000|| playerScore == 1500|| playerScore == 2000|| playerScore == 2500)
+
+            if (playerScore == 500 || playerScore == 1000 || playerScore == 1500 || playerScore == 2000 || playerScore == 2500)
             {
                 dameLimit += 5;
                 percentLimit += 5;
             }
-            if(playerScore == 750|| playerScore == 1250|| playerScore == 1750)
+            if (playerScore == 750 || playerScore == 1250 || playerScore == 1750)
             {
                 meteorLimit++;
             }
-            if(playerScore == 2000|| playerScore == 2500)
+            if (playerScore == 2000 || playerScore == 2500)
             {
                 meteorSpeed += 5;
             }
@@ -328,12 +408,12 @@ namespace LogicDive
         }
         public void resetMap()
         {
-            for(int i=Meteor.Count-1;i>=0;i--)
+            for (int i = Meteor.Count - 1; i >= 0; i--)
             {
                 this.Controls.Remove(Meteor[i]);
                 Meteor.Remove(Meteor[i]);
             }
-            for (int i =ItemList.Count - 1; i >= 0; i--)
+            for (int i = ItemList.Count - 1; i >= 0; i--)
             {
                 this.Controls.Remove(ItemList[i]);
                 ItemList.Remove(ItemList[i]);
@@ -343,7 +423,7 @@ namespace LogicDive
             pictureBoxPlayer.Top = 100;
             pictureBoxPlayer.Left = 100;
             UpdateInfo();
-      
+
         }
         public void reStartGame()
         {
@@ -353,20 +433,20 @@ namespace LogicDive
             progressBarHP.Value = 100;
             playerLive = 2;
             meteorLimit = 2;
-            meteorSpeed=45;
+            meteorSpeed = 45;
             dameLimit = 21;
             percentLimit = 16;
         }
         public void CreatMeteor()
         {
-            if(Meteor.Count<meteorLimit)
+            if (Meteor.Count < meteorLimit)
             {
                 int point = rd.Next(0, 12);
-                while(CheckPlace(point)==0)
+                while (CheckPlace(point) == 0)
                 {
                     point = rd.Next(0, 12);
                 }
-                for(int i=11;i>0;i--)
+                for (int i = 11; i > 0; i--)
                 {
                     CheckPrev[i] = CheckPrev[i - 1];
                 }
@@ -376,10 +456,10 @@ namespace LogicDive
                 A.Left = SpawnPointMeteor[point].Left;
                 A.SizeMode = SpawnPointMeteor[point].SizeMode;
                 int roll = rd.Next(0, 101);
-                if(roll>=0&&roll<=percentLimit)
+                if (roll >= 0 && roll <= percentLimit)
                 {
-                    A.Width = 67*3;
-                    A.Height = 37*3;
+                    A.Width = 67 * 3;
+                    A.Height = 37 * 3;
                 }
                 else
                 {
@@ -391,29 +471,26 @@ namespace LogicDive
                 A.BackColor = Color.Transparent;
                 this.Controls.Add(A);
                 A.BringToFront();
+
                 int spite = rd.Next(1, 6);
-                if(spite==1)
+                // Use preloaded images when available to avoid IO on tick
+                try
                 {
-                    A.Image = new Bitmap(Application.StartupPath + "\\Resources\\fireball.png");
+                    if (spite == 1 && img.ContainsKey("fireball")) A.Image = img["fireball"];
+                    else if (spite == 2 && img.ContainsKey("bomb2")) A.Image = img["bomb2"];
+                    else if (spite == 3 && img.ContainsKey("bomb1")) A.Image = img["bomb1"];
+                    else if (img.ContainsKey("fireball+")) A.Image = img["fireball+"];
                 }
-                else if(spite==2)
-                {
-                    A.Image = new Bitmap(Application.StartupPath + "\\Resources\\bomb2.png");
-                }
-                else if (spite == 3)
-                {
-                    A.Image = new Bitmap(Application.StartupPath + "\\Resources\\bomb1.png");
-                }
-                else
-                {
-                    A.Image = new Bitmap(Application.StartupPath + "\\Resources\\fireball+.png");
-                }
+                catch { /* ignore image set errors */ }
+
+                // mark as meteor type (optional)
+                A.Tag = "meteor";
                 Meteor.Add(A);
             }
         }
         public void CreatItem()
         {
-            if(ItemList.Count<ItemLimit)
+            if (ItemList.Count < ItemLimit)
             {
                 int roll = rd.Next(1, 4);
                 if (roll == 1)
@@ -423,7 +500,7 @@ namespace LogicDive
                     {
                         ItemType = 2;//gold-40%
                     }
-                    else if (roll >= 99 && roll <= 100&&playerLive<3)
+                    else if (roll >= 99 && roll <= 100 && playerLive < 3)
                     {
                         ItemType = 1;//live-2%
                     }
@@ -442,7 +519,7 @@ namespace LogicDive
                     roll = rd.Next(0, 12);
                     while (CheckPlace(roll) == 0)
                     {
-                        roll= rd.Next(0, 12);
+                        roll = rd.Next(0, 12);
                     }
                     for (int i = 11; i > 0; i--)
                     {
@@ -459,45 +536,48 @@ namespace LogicDive
                     A.BackColor = Color.Transparent;
                     this.Controls.Add(A);
                     A.BringToFront();
-                    if (ItemType == 1)
+
+                    // Set tag to the actual item type so collision uses it (avoid global race)
+                    A.Tag = ItemType;
+
+                    // Use preloaded images
+                    try
                     {
-                        A.Image = new Bitmap(Application.StartupPath + "\\Resources\\heart.png");
-                    }
-                    else if(ItemType == 2)
-                    {
-                        A.Image = new Bitmap(Application.StartupPath + "\\Resources\\coin.png");
-                    }
-                    else if (ItemType == 3)
-                    {
-                        A.Image = new Bitmap(Application.StartupPath + "\\Resources\\pluscoin.png");
-                    }
-                    else if (ItemType == 4)
-                    {
-                        A.Image = new Bitmap(Application.StartupPath + "\\Resources\\plusheart.png");
-                    }
-                    else
-                    {
-                        roll = rd.Next(0, 2);
-                        if(roll==0)
+                        if (ItemType == 1 && img.ContainsKey("heart"))
                         {
-                            A.Image = new Bitmap(Application.StartupPath + "\\Resources\\bomb.png");
+                            A.Image = img["heart"];
+                        }
+                        else if (ItemType == 2 && img.ContainsKey("coin"))
+                        {
+                            A.Image = img["coin"];
+                        }
+                        else if (ItemType == 3 && img.ContainsKey("pluscoin"))
+                        {
+                            A.Image = img["pluscoin"];
+                        }
+                        else if (ItemType == 4 && img.ContainsKey("plusheart"))
+                        {
+                            A.Image = img["plusheart"];
                         }
                         else
                         {
-                            A.Image = new Bitmap(Application.StartupPath + "\\Resources\\bomb3.png");
+                            int r2 = rd.Next(0, 2);
+                            if (r2 == 0 && img.ContainsKey("bomb_small")) A.Image = img["bomb_small"];
+                            else if (img.ContainsKey("bomb3")) A.Image = img["bomb3"];
                         }
-                        
                     }
+                    catch { }
+
                     ItemList.Add(A);
                 }
             }
-           
+
         }
         public int CheckPlace(int x)
         {
-            for(int i=0;i<meteorLimit;i++)
+            for (int i = 0; i < meteorLimit; i++)
             {
-                if(CheckPrev[i]==x)
+                if (CheckPrev[i] == x)
                 {
                     return 0;
                 }
@@ -506,160 +586,87 @@ namespace LogicDive
         }
         public void MoveObject()
         {
-            for(int i=0;i<Meteor.Count;i++)
+            for (int i = 0; i < Meteor.Count; i++)
             {
-                if(Meteor[i].Left>30)
+                if (Meteor[i].Left > 30)
                 {
                     Meteor[i].Left -= meteorSpeed;
                 }
             }
-            for(int i=0;i<ItemList.Count;i++)
+            for (int i = 0; i < ItemList.Count; i++)
             {
                 if (ItemList[i].Left > 30)
                 {
-                    ItemList[i].Left -=itemSpeed;
+                    ItemList[i].Left -= itemSpeed;
                 }
             }
         }
         public void CheckColision()
         {
-            while(Meteor[0].Bounds.IntersectsWith(pictureBoxBorder.Bounds)==true)
+            try
             {
-                this.Controls.Remove(Meteor[0]);
-                Meteor.Remove(Meteor[0]);
-            }
-            if(ItemList.Count>0)
-            {
-                if (ItemList[0].Bounds.IntersectsWith(pictureBoxBorder.Bounds) == true)
+                // Thêm flag để kiểm soát việc khôi phục timer
+                bool gameInterrupted = false;
+
+                // Tạm dừng timer để tránh tick khác sửa list cùng lúc
+                bool prevTimerGame = timerGameTick.Enabled;
+                bool prevTimerMov = timerMov.Enabled;
+                timerGameTick.Enabled = false;
+                timerMov.Enabled = false;
+
+                // --- A) Xóa tất cả meteor chạm biên (duyệt ngược để xóa an toàn) ---
+                for (int i = Meteor.Count - 1; i >= 0; i--)
                 {
-                    this.Controls.Remove(ItemList[0]);
-                    ItemList.Remove(ItemList[0]);
-                }
-            }
-            for(int i=0;i<Meteor.Count;i++)
-            {
-                if(Meteor[i].Bounds.IntersectsWith(pictureBoxPlayer.Bounds)==true)
-                {
-                    int roll = rd.Next(10, dameLimit);
-                    labelInfo.Text = "Va chạm nhẹ :v - Mất " + roll.ToString() + " máu";
-                    SoundPlayer simpleSound = new SoundPlayer(StartUp + "\\Resources\\explo.wav");
-                    simpleSound.Play();
-                    playerHP -= roll;
-                    if(playerHP<=0)
+                    if (Meteor[i] == null) continue;
+                    if (Meteor[i].Bounds.IntersectsWith(pictureBoxBorder.Bounds))
                     {
-                        playerLive--;
                         this.Controls.Remove(Meteor[i]);
-                        Meteor.Remove(Meteor[i]);
-                        inputkey.Clear();
-                        if (playerLive==0)
-                        {                          
-                            resetMap();
-                            playerHP = 100;
-                            progressBarHP.Value = 100;
-                            labelNotify.Visible = true;
-                            pictureBoxPause.Visible = false;
-                            labelNotify.Text = "You Lose !!!" + "\r\n" + "Score :" + playerScore.ToString();
-                            labelInfo.Text = "GameOver cmnr :3";
-                            buttonNO.Visible = true;
-                            buttonYes.Text = "Restart";
-                            buttonNO.Text = "Quit";
-                            buttonYes.Visible = true;
-                            QuestionType = 1;
-                        }
-                        else
-                        {
-                            resetMap();
-                            playerHP = 100;
-                            progressBarHP.Value = 100;
-                            labelNotify.Visible = true;
-                            pictureBoxPause.Visible = false;
-                            labelNotify.Text = "You Lost A Live !!!";
-                            labelInfo.Text = "Mất một mạng rồi :3";
-                            buttonStart.Visible = true;
-                            buttonStart.Text = "Retry";
-                        }
-
+                        Meteor.RemoveAt(i);
                     }
-                    else
-                    {
-                        progressBarHP.Value = playerHP;
-                        this.Controls.Remove(Meteor[i]);
-                        Meteor.Remove(Meteor[i]);
-                        i--;
-                    }
-
                 }
-            }
-            for(int i=0;i<ItemList.Count;i++)
-            {
-                if (ItemList[0].Bounds.IntersectsWith(pictureBoxPlayer.Bounds) == true)
-                {
-                    if(ItemType==1)//live
-                    {
-                        SoundPlayer simpleSound = new SoundPlayer(StartUp + "\\Resources\\heal.wav");
-                        simpleSound.Play();
-                        labelInfo.Text = "Bạn nhặt được 1 mạng :3";
-                        if (playerLive<3)
-                        {
-                            playerLive++;
-                        }
-                        this.Controls.Remove(ItemList[0]);
-                        ItemList.Remove(ItemList[0]);
-                    }
-                    else if(ItemType==2)//coin
-                    {
 
-                        SoundPlayer simpleSound = new SoundPlayer(StartUp+"\\Resources\\coin.wav");
-                        simpleSound.Play();
-                        labelInfo.Text = "Bạn nhặt được 1 đồng xu +50 điểm :3";
-                        playerScore += 50;
-                        this.Controls.Remove(ItemList[0]);
-                        ItemList.Remove(ItemList[0]);
-                    }
-                    else if (ItemType == 3)//speed
+                // --- B) Xóa tất cả item chạm biên (duyệt ngược) ---
+                for (int i = ItemList.Count - 1; i >= 0; i--)
+                {
+                    if (ItemList[i] == null) continue;
+                    if (ItemList[i].Bounds.IntersectsWith(pictureBoxBorder.Bounds))
                     {
-                        SoundPlayer simpleSound = new SoundPlayer(StartUp + "\\Resources\\powerup.wav");
-                        simpleSound.Play();
-                        labelInfo.Text = "Bạn nhặt được tăng tốc , tốc độ x2 trong 5s :3";
-                        movSpeed = 60;
-                        speedCD = 50;
-                        this.Controls.Remove(ItemList[0]);
-                        ItemList.Remove(ItemList[0]);
+                        this.Controls.Remove(ItemList[i]);
+                        ItemList.RemoveAt(i);
                     }
-                    else if (ItemType == 4)//hp
-                    {
-                        SoundPlayer simpleSound = new SoundPlayer(StartUp + "\\Resources\\heal.wav");
-                        simpleSound.Play();
-                        int roll = rd.Next(10, 21);
-                        playerHP += roll;
-                        labelInfo.Text = "Nhặt được hộp máu , bạn được hồi " + roll.ToString() + " máu";
-                        if (playerHP>100)
-                        {
-                            playerHP = 100;
-                        }
-                        progressBarHP.Value = playerHP;
-                        this.Controls.Remove(ItemList[0]);
-                        ItemList.Remove(ItemList[0]);
-                    }
-                    else
+                }
+
+                // --- C) Kiểm tra va chạm Meteor vs Player (duyệt ngược) ---
+                for (int i = Meteor.Count - 1; i >= 0; i--)
+                {
+                    var m = Meteor[i];
+                    if (m == null) continue;
+                    if (m.Bounds.IntersectsWith(pictureBoxPlayer.Bounds))
                     {
                         int roll = rd.Next(10, dameLimit);
-                        playerHP -= roll;
                         labelInfo.Text = "Va chạm nhẹ :v - Mất " + roll.ToString() + " máu";
-                        SoundPlayer simpleSound = new SoundPlayer(StartUp + "\\Resources\\explo.wav");
-                        simpleSound.Play();
+                        try { if (sfx.ContainsKey("explo")) sfx["explo"].Play(); } catch { }
+
+                        playerHP -= roll;
+
+                        // remove meteor an toàn
+                        this.Controls.Remove(m);
+                        Meteor.RemoveAt(i);
+
+                        inputkey.Clear();
+
                         if (playerHP <= 0)
                         {
                             playerLive--;
-                            this.Controls.Remove(ItemList[0]);
-                            ItemList.Remove(ItemList[0]);
-                            inputkey.Clear();
-                            if (playerLive == 0)
+                            playerHP = 100;
+                            progressBarHP.Value = playerHP;
+
+                            if (playerLive <= 0)
                             {
+                                // Game over
                                 resetMap();
-                                playerHP = 100;
-                                progressBarHP.Value = 100;
-                                labelNotify.Visible = true; pictureBoxPause.Visible = false;
+                                labelNotify.Visible = true;
+                                pictureBoxPause.Visible = false;
                                 labelNotify.Text = "You Lose !!!" + "\r\n" + "Score :" + playerScore.ToString();
                                 labelInfo.Text = "GameOver cmnr :3";
                                 buttonNO.Visible = true;
@@ -670,30 +677,153 @@ namespace LogicDive
                             }
                             else
                             {
+                                // Lost one life
                                 resetMap();
-                                playerHP = 100;
-                                progressBarHP.Value = 100;
-                                labelNotify.Visible = true; pictureBoxPause.Visible = false;
+                                labelNotify.Visible = true;
+                                pictureBoxPause.Visible = false;
                                 labelNotify.Text = "You Lost A Live !!!";
                                 labelInfo.Text = "Mất một mạng rồi :3";
                                 buttonStart.Visible = true;
                                 buttonStart.Text = "Retry";
                             }
 
+                            // Set flag để không khôi phục timer
+                            gameInterrupted = true;
+
+                            // Nếu resetMap() đã clear list thì dừng vòng kiểm tra tiếp
+                            if (Meteor.Count == 0 && ItemList.Count == 0) break;
                         }
                         else
                         {
-                            progressBarHP.Value = playerHP;
-                            this.Controls.Remove(ItemList[0]);
-                            ItemList.Remove(ItemList[0]);
-                            i--;
+                            progressBarHP.Value = Math.Max(0, Math.Min(100, playerHP));
                         }
                     }
-
                 }
-            }
 
+                // --- D) Kiểm tra va chạm Item vs Player (duyệt ngược) ---
+                // Chỉ tiếp tục nếu chưa bị interrupt (mất mạng/game over)
+                if (!gameInterrupted)
+                {
+                    for (int i = ItemList.Count - 1; i >= 0; i--)
+                    {
+                        var it = ItemList[i];
+                        if (it == null) continue;
+                        if (it.Bounds.IntersectsWith(pictureBoxPlayer.Bounds))
+                        {
+                            // Lấy loại item từ Tag
+                            int itType = ItemType;
+                            if (it.Tag != null)
+                            {
+                                int tryType;
+                                if (int.TryParse(it.Tag.ToString(), out tryType)) itType = tryType;
+                            }
+
+                            switch (itType)
+                            {
+                                case 1: // live
+                                    try { if (sfx.ContainsKey("heal")) sfx["heal"].Play(); } catch { }
+                                    labelInfo.Text = "Bạn nhặt được 1 mạng :3";
+                                    if (playerLive < 3) playerLive++;
+                                    break;
+
+                                case 2: // coin
+                                    try { if (sfx.ContainsKey("coin")) sfx["coin"].Play(); } catch { }
+                                    labelInfo.Text = "Bạn nhặt được 1 đồng xu +50 điểm :3";
+                                    playerScore += 50;
+                                    break;
+
+                                case 3: // speed
+                                    try { if (sfx.ContainsKey("powerup")) sfx["powerup"].Play(); } catch { }
+                                    labelInfo.Text = "Bạn nhặt được tăng tốc , tốc độ x2 trong 5s :3";
+                                    movSpeed = 60;
+                                    speedCD = 50;
+                                    break;
+
+                                case 4: // hp
+                                    try { if (sfx.ContainsKey("heal")) sfx["heal"].Play(); } catch { }
+                                    int roll = rd.Next(10, 21);
+                                    playerHP = Math.Min(100, playerHP + roll);
+                                    labelInfo.Text = "Nhặt được hộp máu , bạn được hồi " + roll.ToString() + " máu";
+                                    progressBarHP.Value = playerHP;
+                                    break;
+
+                                default: // boom (gây damage)
+                                    {
+                                        int dmg = rd.Next(10, dameLimit);
+                                        playerHP -= dmg;
+                                        labelInfo.Text = "Va chạm nhẹ :v - Mất " + dmg.ToString() + " máu";
+                                        try { if (sfx.ContainsKey("explo")) sfx["explo"].Play(); } catch { }
+
+                                        if (playerHP <= 0)
+                                        {
+                                            playerLive--;
+                                            inputkey.Clear();
+
+                                            if (playerLive <= 0)
+                                            {
+                                                resetMap();
+                                                playerHP = 100;
+                                                progressBarHP.Value = playerHP;
+                                                labelNotify.Visible = true;
+                                                pictureBoxPause.Visible = false;
+                                                labelNotify.Text = "You Lose !!!" + "\r\n" + "Score :" + playerScore.ToString();
+                                                labelInfo.Text = "GameOver cmnr :3";
+                                                buttonNO.Visible = true;
+                                                buttonYes.Text = "Restart";
+                                                buttonNO.Text = "Quit";
+                                                buttonYes.Visible = true;
+                                                QuestionType = 1;
+                                            }
+                                            else
+                                            {
+                                                resetMap();
+                                                playerHP = 100;
+                                                progressBarHP.Value = playerHP;
+                                                labelNotify.Visible = true;
+                                                pictureBoxPause.Visible = false;
+                                                labelNotify.Text = "You Lost A Live !!!";
+                                                labelInfo.Text = "Mất một mạng rồi :3";
+                                                buttonStart.Visible = true;
+                                                buttonStart.Text = "Retry";
+                                            }
+
+                                            // Set flag để không khôi phục timer
+                                            gameInterrupted = true;
+
+                                            if (Meteor.Count == 0 && ItemList.Count == 0) break;
+                                        }
+                                        else
+                                        {
+                                            progressBarHP.Value = Math.Max(0, Math.Min(100, playerHP));
+                                        }
+                                    }
+                                    break;
+                            }
+
+                            // Xóa item khỏi form và danh sách (an toàn)
+                            this.Controls.Remove(it);
+                            ItemList.RemoveAt(i);
+                        }
+                    }
+                }
+
+                // Khôi phục timer CHỈ nếu không bị interrupt (mất mạng/game over)
+                if (!gameInterrupted)
+                {
+                    timerGameTick.Enabled = prevTimerGame;
+                    timerMov.Enabled = prevTimerMov;
+                }
+                // Nếu gameInterrupted, timer đã bị tắt trong resetMap() và sẽ chờ button Start/Retry bật lại
+            }
+            catch (Exception ex)
+            {
+                // Hiện chi tiết lỗi để debug (không hiện MessageBox gây block)
+                System.Diagnostics.Debug.WriteLine("Lỗi trong CheckColision: " + ex.Message + "\n" + ex.StackTrace);
+                // Khôi phục timer trong trường hợp exception (nhưng kiểm tra flag nếu cần)
+                try { timerGameTick.Enabled = true; timerMov.Enabled = true; } catch { }
+            }
         }
+
 
         private void ButtonStart_Click(object sender, EventArgs e)
         {
@@ -707,7 +837,7 @@ namespace LogicDive
 
         private void ButtonYes_Click(object sender, EventArgs e)
         {
-            if(QuestionType==1)
+            if (QuestionType == 1)
             {
                 reStartGame();
                 QuestionType = 0;
@@ -746,37 +876,53 @@ namespace LogicDive
 
         private void PictureBoxSound_Click(object sender, EventArgs e)
         {
-            if(music==0)
+            try
             {
-                music = 1;
-                pictureBoxSound.Image = new Bitmap(StartUp+"\\Resources\\musicon.png");
-                MusicPlayer.Ctlcontrols.play();
-                MusicPlayer.settings.autoStart = true;
-                MusicPlayer.settings.setMode("loop", true);
+                if (music == 0)
+                {
+                    music = 1;
+                    // Đổi hình sang icon BẬT
+                    if (img.ContainsKey("musicon")) pictureBoxSound.Image = img["musicon"];
+
+                    if (MusicPlayer != null)
+                    {
+                        MusicPlayer.Ctlcontrols.play();
+                        MusicPlayer.settings.autoStart = true;
+                        MusicPlayer.settings.setMode("loop", true);
+                    }
+                }
+                else
+                {
+                    music = 0;
+                    // Đổi hình sang icon TẮT
+                    if (img.ContainsKey("musicoff")) pictureBoxSound.Image = img["musicoff"];
+
+                    if (MusicPlayer != null)
+                    {
+                        MusicPlayer.Ctlcontrols.stop();  // Dừng hoàn toàn
+                        // MusicPlayer.close();  // Không close ở đây để có thể play lại sau, chỉ close khi form closing
+                    }
+                }
             }
-            else
+            catch (Exception ex)
             {
-                music = 0;
-                pictureBoxSound.Image = new Bitmap(StartUp + "\\Resources\\musicoff.jpg");
-                MusicPlayer.Ctlcontrols.pause();
-                MusicPlayer.settings.autoStart = true;
-                MusicPlayer.settings.setMode("loop", true);
+                MessageBox.Show("Lỗi khi bật/tắt nhạc: " + ex.Message);
             }
         }
 
         private void PictureBoxPause_Click(object sender, EventArgs e)
         {
-            if(gamepause==0)
+            if (gamepause == 0)
             {
                 gamepause = 1;
-                pictureBoxPause.Image = new Bitmap(StartUp + "\\Resources\\playbut.png");
+                if (img.ContainsKey("playbut")) pictureBoxPause.Image = img["playbut"];
                 timerGameTick.Enabled = false;
                 timerMov.Enabled = false;
             }
             else
             {
                 gamepause = 0;
-                pictureBoxPause.Image = new Bitmap(StartUp + "\\Resources\\pausebut.png");
+                if (img.ContainsKey("pausebut")) pictureBoxPause.Image = img["pausebut"];
                 timerGameTick.Enabled = true;
                 timerMov.Enabled = true;
             }
@@ -784,8 +930,46 @@ namespace LogicDive
 
         private void GameForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-            MusicPlayer.Ctlcontrols.pause();
+            try
+            {
+                MusicPlayer.Ctlcontrols.stop();  // Dừng hoàn toàn thay vì chỉ pause
+                MusicPlayer.close();             // Dispose để giải phóng resources
+            }
+            catch { }
             Setting.musicIntroForm = 1;
+            GameOver();
+        }
+
+        private void GameOver()
+        {
+            string playerName = LogicDive.Name.PlayerName;
+            int score = playerScore;
+
+            var existingPlayer = Ranking.players
+                .FirstOrDefault(p => p.Name == playerName);
+
+            if (existingPlayer != null)
+                existingPlayer.UpdateScore(score);
+            else
+                Ranking.players.Add(new Player(playerName, score));
+
+            Ranking.players = Ranking.players
+                .OrderByDescending(p => p.Score)
+                .Take(5)
+                .ToList();
+
+            var rankingForm = new Ranking();
+            rankingForm.SortAndDisplayRanking();
+        }
+
+        private void pictureBox20_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void label3_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }
